@@ -443,6 +443,8 @@ class BasicTransformerBlock(nn.Module):
             action_control=False
     ):
         super().__init__()
+        self._args = {k: v for k, v in locals().items() if k != "self" and not k.startswith("_")}
+
         assert attn_mode in self.ATTENTION_MODES
         if attn_mode != "softmax" and not XFORMERS_IS_AVAILABLE:
             print(

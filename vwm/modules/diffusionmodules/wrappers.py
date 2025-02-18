@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from packaging import version
+from einops import rearrange
 
 from vwm.util import repeat_as_img_seq
 
@@ -25,6 +26,10 @@ class OpenAIWrapper(IdentityWrapper):
     def forward(
             self, x: torch.Tensor, t: torch.Tensor, c: dict, cond_mask: torch.Tensor, num_frames: int, **kwargs
     ) -> torch.Tensor:
+
+        if len(x.shape) == 5:
+            x = rearrange(x, "(b t) cam_n c h w -> (b cam_n t) c h w", t=num_frames, cam_n=6)
+
         if "concat" in c and num_frames > 1 and c["concat"].shape[0] != x.shape[0]:
             assert c["concat"].shape[0] == x.shape[0] // num_frames, f"{c['concat'].shape} {x.shape}"
             c["concat"] = repeat_as_img_seq(c["concat"], num_frames)

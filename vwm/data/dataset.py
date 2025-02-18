@@ -3,7 +3,7 @@ import random
 from pytorch_lightning import LightningDataModule
 from torch.utils.data import DataLoader, Dataset
 
-from .subsets import YouTubeDataset, NuScenesDataset
+from .subsets import YouTubeDataset, NuScenesDataset, NuScenesDatasetMultiview
 
 
 def dataset_mapping(subset_list: list, target_height: int, target_width: int, num_frames: int):
@@ -16,6 +16,10 @@ def dataset_mapping(subset_list: list, target_height: int, target_width: int, nu
         elif subset_name == "NuScenes":
             datasets.append(
                 NuScenesDataset(target_height=target_height, target_width=target_width, num_frames=num_frames)
+            )
+        elif subset_name == "NuScenesMultiview":
+            datasets.append(
+                NuScenesDatasetMultiview(target_height=target_height, target_width=target_width, num_frames=num_frames)
             )
         else:
             raise NotImplementedError(f"Please define {subset_name} as a subset")

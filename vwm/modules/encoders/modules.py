@@ -114,6 +114,61 @@ class GeneralConditioner(nn.Module):
                 batch[embedder.input_key][i] = val
         return batch
 
+
+    # def forward(self, batch: Dict, force_zero_embeddings: Optional[List] = None) -> Dict:
+    #     output = dict()
+    #     force_zero_embeddings = default(force_zero_embeddings, list())
+    #     for embedder in self.embedders:
+    #         embedding_context = nullcontext if embedder.is_trainable else torch.no_grad
+    #         with embedding_context():
+    #             if hasattr(embedder, "input_key") and embedder.input_key is not None:
+    #                 if embedder.legacy_ucg_val is not None:
+    #                     batch = self.possibly_get_ucg_val(embedder, batch)
+    #                 if embedder.input_key in batch:
+    #                     # emb_out = embedder(batch[embedder.input_key])
+    #                     emb_out_1s = []
+    #                     # TODO this should be a parameter
+    #                     for i in range(batch[embedder.input_key].shape[0]):
+    #                         emb_out_1 = embedder(batch[embedder.input_key][i].unsqueeze(0))
+    #                         emb_out_1s.append(emb_out_1)
+    #                     emb_out = torch.concat(emb_out_1s, 0)
+
+    #                 elif embedder.add_sequence_dim:  # concatenation
+    #                     emb_dim = embedder.num_features * embedder.outdim
+    #                     emb_out = torch.zeros((batch["cond_aug"].shape[0], 1, emb_dim), device=batch["cond_aug"].device)
+    #                 else:  # addition
+    #                     continue
+    #             elif hasattr(embedder, "input_keys"):
+    #                 emb_out = embedder(*[batch[k] for k in embedder.input_keys])
+    #         assert isinstance(
+    #             emb_out, (torch.Tensor, list, tuple)
+    #         ), f"Encoder outputs must be tensors or a sequence, but got {type(emb_out)}"
+    #         if not isinstance(emb_out, (list, tuple)):
+    #             emb_out = [emb_out]
+    #         for emb in emb_out:
+    #             out_key = self.OUTPUT_DIM2KEYS[emb.dim()]
+    #             if embedder.ucg_rate > 0.0 and embedder.legacy_ucg_val is None:
+    #                 emb = (
+    #                         expand_dims_like(
+    #                             torch.bernoulli(
+    #                                 (1.0 - embedder.ucg_rate) * torch.ones(emb.shape[0], device=emb.device)
+    #                             ),
+    #                             emb
+    #                         )
+    #                         * emb
+    #                 )
+    #             if hasattr(embedder, "input_key") and embedder.input_key in force_zero_embeddings:
+    #                 emb = torch.zeros_like(emb)
+    #             if out_key in output:
+    #                 if emb.shape[-1] == 768 and out_key == "vector":
+    #                     output[out_key] += emb
+    #                 else:
+    #                     output[out_key] = torch.cat((output[out_key], emb), self.KEY2CATDIM[out_key])
+    #             else:
+    #                 output[out_key] = emb
+    #     return output
+
+
     def forward(self, batch: Dict, force_zero_embeddings: Optional[List] = None) -> Dict:
         output = dict()
         force_zero_embeddings = default(force_zero_embeddings, list())
@@ -124,7 +179,17 @@ class GeneralConditioner(nn.Module):
                     if embedder.legacy_ucg_val is not None:
                         batch = self.possibly_get_ucg_val(embedder, batch)
                     if embedder.input_key in batch:
-                        emb_out = embedder(batch[embedder.input_key])
+                        # emb_out = embedder(batch[embedder.input_key])
+                        emb_out_1s = []
+                        # TODO this should be a parameter
+                        for i in range(batch[embedder.input_key].shape[0]):
+                            if len(batch[embedder.input_key][i].shape) == 4:
+                                emb_out_1 = embedder(batch[embedder.input_key][i])
+                            else:
+                                emb_out_1 = embedder(batch[embedder.input_key][i].unsqueeze(0))
+                            emb_out_1s.append(emb_out_1)
+                        emb_out = torch.concat(emb_out_1s, 0)
+
                     elif embedder.add_sequence_dim:  # concatenation
                         emb_dim = embedder.num_features * embedder.outdim
                         emb_out = torch.zeros((batch["cond_aug"].shape[0], 1, emb_dim), device=batch["cond_aug"].device)
@@ -155,7 +220,10 @@ class GeneralConditioner(nn.Module):
                     if emb.shape[-1] == 768 and out_key == "vector":
                         output[out_key] += emb
                     else:
+                        if output[out_key].shape[0] != emb.shape[0]:
+                            emb = emb.expand(output[out_key].shape[0], -1, -1)
                         output[out_key] = torch.cat((output[out_key], emb), self.KEY2CATDIM[out_key])
+
                 else:
                     output[out_key] = emb
         return output

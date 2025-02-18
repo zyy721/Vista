@@ -5,6 +5,29 @@ from vwm.modules.video_attention import SpatialVideoTransformer
 from vwm.util import default, repeat_as_img_seq
 from .util import AlphaBlender
 
+from vwm.modules.attention import BasicTransformerBlock
+from vwm.modules.video_attention import BasicMultiviewTransformerBlock, VideoTransformerBlock, VideoMultiviewTransformerBlock
+
+# take from torch.ao.quantization.fuse_modules
+# Generalization of getattr
+def _get_module(model, submodule_key):
+    tokens = submodule_key.split('.')
+    cur_mod = model
+    for s in tokens:
+        cur_mod = getattr(cur_mod, s)
+    return cur_mod
+
+
+# Generalization of setattr
+def _set_module(model, submodule_key, module):
+    tokens = submodule_key.split('.')
+    sub_tokens = tokens[:-1]
+    cur_mod = model
+    for s in sub_tokens:
+        cur_mod = getattr(cur_mod, s)
+
+    setattr(cur_mod, tokens[-1], module)
+
 
 class VideoResBlock(ResBlock):
     def __init__(
@@ -110,7 +133,10 @@ class VideoUNet(nn.Module):
             disable_temporal_crossattention: bool = False,
             max_ddpm_temb_period: int = 10000,
             add_lora: bool = False,
-            action_control: bool = False
+            action_control: bool = False,
+
+            # num_frames: int = 10,
+
     ):
         super().__init__()
         assert context_dim is not None
@@ -439,6 +465,49 @@ class VideoUNet(nn.Module):
             )
         )
 
+
+        # Multi-View
+        # neighboring_view_pair =  {0: [5, 1],
+        #                           1: [0, 2],
+        #                           2: [1, 3],
+        #                           3: [2, 4],
+        #                           4: [3, 5],
+        #                           5: [4, 0]}
+        # neighboring_attn_type = "add"
+        # zero_module_type = "zero_linear"
+
+        # crossview_attn_type = "basic"
+        # self._new_module = {}
+        # for name, mod in list(self.named_modules()):
+        #     if isinstance(mod, BasicTransformerBlock):
+        #         if crossview_attn_type == "basic":
+        #             _set_module(self, name, BasicMultiviewTransformerBlock(
+        #                 **mod._args,
+        #                 neighboring_view_pair=neighboring_view_pair,
+        #                 neighboring_attn_type=neighboring_attn_type,
+        #                 zero_module_type=zero_module_type,
+        #                 num_frames=num_frames,
+        #             ))
+        #         else:
+        #             raise TypeError(f"Unknown attn type: {crossview_attn_type}")
+        #         for k, v in _get_module(self, name).new_module.items():
+        #             self._new_module[f"{name}.{k}"] = v
+        #     if isinstance(mod, VideoTransformerBlock):
+        #         if crossview_attn_type == "basic":
+        #             _set_module(self, name, VideoMultiviewTransformerBlock(
+        #                 **mod._args,
+        #                 neighboring_view_pair=neighboring_view_pair,
+        #                 neighboring_attn_type=neighboring_attn_type,
+        #                 zero_module_type=zero_module_type,
+        #                 num_frames=num_frames,
+        #             ))
+        #         else:
+        #             raise TypeError(f"Unknown attn type: {crossview_attn_type}")
+        #         for k, v in _get_module(self, name).new_module.items():
+        #             self._new_module[f"{name}.{k}"] = v
+
+        # print()
+
     def forward(
             self,
             x: torch.Tensor,
@@ -466,9 +535,14 @@ class VideoUNet(nn.Module):
 
         if self.num_classes is not None:
             if num_frames > 1 and y.shape[0] != x.shape[0]:
-                assert y.shape[0] == x.shape[0] // num_frames, f"{y.shape} {x.shape}"
+                # assert y.shape[0] == x.shape[0] // num_frames, f"{y.shape} {x.shape}"
                 y = repeat_as_img_seq(y, num_frames)
             emb = emb + self.label_emb(y)
+
+        if emb.shape[0] != x.shape[0] // num_frames:
+            emb = rearrange(emb, "(b t) c -> b t c", t=num_frames)
+            emb = emb.unsqueeze(1).expand(-1, 6, -1, -1)
+            emb = emb.contiguous().view(-1, emb.shape[-1])
 
         h = x
         for module in self.input_blocks:
@@ -501,3 +575,193 @@ class VideoUNet(nn.Module):
 
         h = h.type(x.dtype)
         return self.out(h)
+
+
+
+class VideoUNetMultiView(VideoUNet):
+    def __init__(
+            self,
+            in_channels: int,
+            model_channels: int,
+            out_channels: int,
+            num_res_blocks: int,
+            attention_resolutions: int,
+            dropout: float = 0.0,
+            channel_mult: List[int] = (1, 2, 4, 8),
+            conv_resample: bool = True,
+            dims: int = 2,
+            num_classes: Optional[int] = None,
+            use_checkpoint: bool = False,
+            num_heads: int = -1,
+            num_head_channels: int = -1,
+            num_heads_upsample: int = -1,
+            use_scale_shift_norm: bool = False,
+            resblock_updown: bool = False,
+            transformer_depth: Union[List[int], int] = 1,
+            transformer_depth_middle: Optional[int] = None,
+            context_dim: Optional[int] = None,
+            time_downup: bool = False,
+            time_context_dim: Optional[int] = None,
+            extra_ff_mix_layer: bool = False,
+            use_spatial_context: bool = False,
+            merge_strategy: str = "learned_with_images",
+            merge_factor: float = 0.5,
+            spatial_transformer_attn_type: str = "softmax",
+            video_kernel_size: Union[int, List[int]] = 3,
+            use_linear_in_transformer: bool = False,
+            adm_in_channels: Optional[int] = None,
+            disable_temporal_crossattention: bool = False,
+            max_ddpm_temb_period: int = 10000,
+            add_lora: bool = False,
+            action_control: bool = False,
+
+            num_frames: int = 10,
+
+    ):
+        super().__init__(
+            in_channels,
+            model_channels,
+            out_channels,
+            num_res_blocks,
+            attention_resolutions,
+            dropout,
+            channel_mult,
+            conv_resample,
+            dims,
+            num_classes,
+            use_checkpoint,
+            num_heads,
+            num_head_channels,
+            num_heads_upsample,
+            use_scale_shift_norm,
+            resblock_updown,
+            transformer_depth,
+            transformer_depth_middle,
+            context_dim,
+            time_downup,
+            time_context_dim,
+            extra_ff_mix_layer,
+            use_spatial_context,
+            merge_strategy,
+            merge_factor,
+            spatial_transformer_attn_type,
+            video_kernel_size,
+            use_linear_in_transformer,
+            adm_in_channels,
+            disable_temporal_crossattention,
+            max_ddpm_temb_period,
+            add_lora,
+            action_control,
+        )
+
+        # Multi-View
+        neighboring_view_pair =  {0: [5, 1],
+                                  1: [0, 2],
+                                  2: [1, 3],
+                                  3: [2, 4],
+                                  4: [3, 5],
+                                  5: [4, 0]}
+        neighboring_attn_type = "add"
+        zero_module_type = "zero_linear"
+
+        crossview_attn_type = "basic"
+        self._new_module = {}
+        for name, mod in list(self.named_modules()):
+            if isinstance(mod, BasicTransformerBlock):
+                if crossview_attn_type == "basic":
+                    _set_module(self, name, BasicMultiviewTransformerBlock(
+                        **mod._args,
+                        neighboring_view_pair=neighboring_view_pair,
+                        neighboring_attn_type=neighboring_attn_type,
+                        zero_module_type=zero_module_type,
+                        num_frames=num_frames,
+                    ))
+                else:
+                    raise TypeError(f"Unknown attn type: {crossview_attn_type}")
+                for k, v in _get_module(self, name).new_module.items():
+                    self._new_module[f"{name}.{k}"] = v
+            if isinstance(mod, VideoTransformerBlock):
+                if crossview_attn_type == "basic":
+                    _set_module(self, name, VideoMultiviewTransformerBlock(
+                        **mod._args,
+                        neighboring_view_pair=neighboring_view_pair,
+                        neighboring_attn_type=neighboring_attn_type,
+                        zero_module_type=zero_module_type,
+                        num_frames=num_frames,
+                    ))
+                else:
+                    raise TypeError(f"Unknown attn type: {crossview_attn_type}")
+                for k, v in _get_module(self, name).new_module.items():
+                    self._new_module[f"{name}.{k}"] = v
+
+        # print()
+
+    def forward(
+            self,
+            x: torch.Tensor,
+            timesteps: torch.Tensor,
+            context: Optional[torch.Tensor] = None,
+            y: Optional[torch.Tensor] = None,
+            time_context: Optional[torch.Tensor] = None,
+            cond_mask: Optional[torch.Tensor] = None,
+            num_frames: Optional[int] = None
+    ):
+        assert (y is not None) == (
+                self.num_classes is not None
+        ), "Must specify y if and only if the model is class-conditional"
+        hs = list()
+        t_emb = timestep_embedding(timesteps, self.model_channels, repeat_only=False)
+        if cond_mask is not None and cond_mask.any():
+            cond_mask_ = cond_mask[..., None].float()
+            emb = self.cond_time_stack_embed(t_emb) * cond_mask_ + self.time_embed(t_emb) * (1 - cond_mask_)
+        else:
+            emb = self.time_embed(t_emb)
+
+        if num_frames > 1 and context.shape[0] != x.shape[0]:
+            assert context.shape[0] == x.shape[0] // num_frames, f"{context.shape} {x.shape}"
+            context = repeat_as_img_seq(context, num_frames)
+
+        if self.num_classes is not None:
+            if num_frames > 1 and y.shape[0] != x.shape[0]:
+                # assert y.shape[0] == x.shape[0] // num_frames, f"{y.shape} {x.shape}"
+                y = repeat_as_img_seq(y, num_frames)
+            emb = emb + self.label_emb(y)
+
+        if emb.shape[0] != x.shape[0] // num_frames:
+            emb = rearrange(emb, "(b t) c -> b t c", t=num_frames)
+            emb = emb.unsqueeze(1).expand(-1, 6, -1, -1)
+            emb = emb.contiguous().view(-1, emb.shape[-1])
+
+        h = x
+        for module in self.input_blocks:
+            h = module(
+                h,
+                emb,
+                context=context,
+                time_context=time_context,
+                num_frames=num_frames
+            )
+            hs.append(h)
+
+        h = self.middle_block(
+            h,
+            emb,
+            context=context,
+            time_context=time_context,
+            num_frames=num_frames
+        )
+
+        for module in self.output_blocks:
+            h = torch.cat((h, hs.pop()), dim=1)
+            h = module(
+                h,
+                emb,
+                context=context,
+                time_context=time_context,
+                num_frames=num_frames
+            )
+
+        h = h.type(x.dtype)
+        h = self.out(h)
+        h = rearrange(h, "(b cam_n t) c h w -> (b t) cam_n c h w", t=num_frames, cam_n=6)
+        return h

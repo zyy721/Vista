@@ -48,6 +48,17 @@ class StandardDiffusionLoss(nn.Module):
         noised_input = input + noise * sigmas_bc
         return noised_input
 
+    # def forward(
+    #         self,
+    #         network: nn.Module,
+    #         denoiser: Denoiser,
+    #         conditioner: GeneralConditioner,
+    #         input: torch.Tensor,
+    #         batch: Dict
+    # ) -> torch.Tensor:
+    #     cond = conditioner(batch)
+    #     return self._forward(network, denoiser, cond, input)
+
     def forward(
             self,
             network: nn.Module,
@@ -56,8 +67,52 @@ class StandardDiffusionLoss(nn.Module):
             input: torch.Tensor,
             batch: Dict
     ) -> torch.Tensor:
-        cond = conditioner(batch)
+        if len(batch['cond_frames'].shape) == 5:
+            cond = conditioner(batch)
+            input = rearrange(input, "(b cam_n t) c h w -> (b t) cam_n c h w", t=self.num_frames, cam_n=6)
+        else:
+            cond = conditioner(batch)
         return self._forward(network, denoiser, cond, input)
+
+    # def _forward(
+    #         self,
+    #         network: nn.Module,
+    #         denoiser: Denoiser,
+    #         cond: Dict,
+    #         input: torch.Tensor
+    # ):
+    #     sigmas = self.sigma_sampler(input.shape[0]).to(input)
+    #     cond_mask = torch.zeros_like(sigmas)
+    #     if self.replace_cond_frames:
+    #         cond_mask = rearrange(cond_mask, "(b t) -> b t", t=self.num_frames)
+    #         for each_cond_mask in cond_mask:
+    #             assert len(self.cond_frames_choices[-1]) < self.num_frames
+    #             weights = [2 ** n for n in range(len(self.cond_frames_choices))]
+    #             cond_indices = random.choices(self.cond_frames_choices, weights=weights, k=1)[0]
+    #             if cond_indices:
+    #                 each_cond_mask[cond_indices] = 1
+    #         cond_mask = rearrange(cond_mask, "b t -> (b t)")
+    #     noise = torch.randn_like(input)
+    #     if self.offset_noise_level > 0.0:  # the entire channel is shifted together
+    #         offset_shape = (input.shape[0], input.shape[1])
+    #         # offset_shape = (input.shape[0] // self.num_frames, 1, input.shape[1])
+    #         rand_init = torch.randn(offset_shape, device=input.device)
+    #         # rand_init = repeat(rand_init, "b 1 c -> (b t) c", t=self.num_frames)
+    #         noise = noise + self.offset_noise_level * append_dims(rand_init, input.ndim)
+    #     if self.replace_cond_frames:
+    #         sigmas_bc = append_dims((1 - cond_mask) * sigmas, input.ndim)
+    #     else:
+    #         sigmas_bc = append_dims(sigmas, input.ndim)
+    #     noised_input = self.get_noised_input(sigmas_bc, noise, input)
+
+    #     model_output = denoiser(network, noised_input, sigmas, cond, cond_mask)
+    #     w = append_dims(self.loss_weighting(sigmas), input.ndim)
+
+    #     if self.replace_cond_frames:  # ignore mask predictions
+    #         predict = model_output * append_dims(1 - cond_mask, input.ndim) + input * append_dims(cond_mask, input.ndim)
+    #     else:
+    #         predict = model_output
+    #     return self.get_loss(predict, input, w)
 
     def _forward(
             self,
@@ -88,7 +143,7 @@ class StandardDiffusionLoss(nn.Module):
             sigmas_bc = append_dims((1 - cond_mask) * sigmas, input.ndim)
         else:
             sigmas_bc = append_dims(sigmas, input.ndim)
-        noised_input = self.get_noised_input(sigmas_bc, noise, input)
+        noised_input = self.get_noised_input(sigmas_bc, noise, input)   # (b t) c
 
         model_output = denoiser(network, noised_input, sigmas, cond, cond_mask)
         w = append_dims(self.loss_weighting(sigmas), input.ndim)
@@ -100,6 +155,12 @@ class StandardDiffusionLoss(nn.Module):
         return self.get_loss(predict, input, w)
 
     def get_loss(self, predict, target, w):
+        if len(predict.shape) == 5:
+            predict = rearrange(predict, "(b t) c ... -> (b c t) ...", t=self.num_frames, c=6)
+            target = rearrange(target, "(b t) c ... -> (b c t) ...", t=self.num_frames, c=6)
+            w = w.expand(-1, 6, -1, -1, -1).contiguous()
+            w = rearrange(w, "(b t) c ... -> (b c t) ...", t=self.num_frames, c=6)
+
         if self.loss_type == "l2":
             if self.use_additional_loss:
                 predict_seq = rearrange(predict, "(b t) ... -> b t ...", t=self.num_frames)

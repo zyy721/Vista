@@ -137,13 +137,24 @@ class DiffusionEngine(LightningModule):
             param.requires_grad = False
         self.first_stage_model = model
 
+    # def get_input(self, batch):
+    #     # assuming unified data format, dataloader returns a dict
+    #     # image tensors should be scaled to -1 ... 1 and in bchw format
+    #     input_shape = batch[self.input_key].shape
+    #     if len(input_shape) != 4:  # is an image sequence
+    #         assert input_shape[1] == self.num_frames
+    #         batch[self.input_key] = rearrange(batch[self.input_key], "b t c h w -> (b t) c h w")
+    #     return batch[self.input_key]
+
     def get_input(self, batch):
         # assuming unified data format, dataloader returns a dict
         # image tensors should be scaled to -1 ... 1 and in bchw format
         input_shape = batch[self.input_key].shape
-        if len(input_shape) != 4:  # is an image sequence
+        if len(input_shape) == 5:  # is an image sequence
             assert input_shape[1] == self.num_frames
             batch[self.input_key] = rearrange(batch[self.input_key], "b t c h w -> (b t) c h w")
+        elif len(input_shape) == 6: 
+            batch[self.input_key] = rearrange(batch[self.input_key], "b n_cam t c h w -> (b n_cam t) c h w")
         return batch[self.input_key]
 
     @torch.no_grad()
@@ -208,6 +219,8 @@ class DiffusionEngine(LightningModule):
         return loss, loss_dict
 
     def training_step(self, batch, batch_idx):
+        # with torch.no_grad():
+
         loss, loss_dict = self.shared_step(batch)
 
         self.log_dict(loss_dict, prog_bar=True, logger=True, on_step=True, on_epoch=True)
