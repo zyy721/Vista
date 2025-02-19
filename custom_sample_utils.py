@@ -401,4 +401,9 @@ def do_sample(
         unload_model(model.first_stage_model)
 
         samples = torch.clamp((samples_x + 1.0) / 2.0, min=0.0, max=1.0)
+
+        samples = rearrange(samples, "(n_cam t) c h w -> n_cam t c h w")
+        samples_z = rearrange(samples_z, "(n_cam t) c h w -> n_cam t c h w")
+        images = rearrange(images, "(n_cam t) c h w -> n_cam t c h w")
+
         return samples, samples_z, images
