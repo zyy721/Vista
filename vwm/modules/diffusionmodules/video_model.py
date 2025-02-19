@@ -665,6 +665,7 @@ class VideoUNetMultiView(VideoUNet):
         zero_module_type = "zero_linear"
 
         crossview_attn_type = "basic"
+        origin_img_size = [320, 576]
         self._new_module = {}
         for name, mod in list(self.named_modules()):
             if isinstance(mod, BasicTransformerBlock):
@@ -675,6 +676,7 @@ class VideoUNetMultiView(VideoUNet):
                         neighboring_attn_type=neighboring_attn_type,
                         zero_module_type=zero_module_type,
                         num_frames=num_frames,
+                        origin_img_size=origin_img_size,
                     ))
                 else:
                     raise TypeError(f"Unknown attn type: {crossview_attn_type}")
@@ -688,6 +690,7 @@ class VideoUNetMultiView(VideoUNet):
                         neighboring_attn_type=neighboring_attn_type,
                         zero_module_type=zero_module_type,
                         num_frames=num_frames,
+                        origin_img_size=origin_img_size,
                     ))
                 else:
                     raise TypeError(f"Unknown attn type: {crossview_attn_type}")

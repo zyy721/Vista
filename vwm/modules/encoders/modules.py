@@ -180,15 +180,22 @@ class GeneralConditioner(nn.Module):
                         batch = self.possibly_get_ucg_val(embedder, batch)
                     if embedder.input_key in batch:
                         # emb_out = embedder(batch[embedder.input_key])
-                        emb_out_1s = []
-                        # TODO this should be a parameter
-                        for i in range(batch[embedder.input_key].shape[0]):
-                            if len(batch[embedder.input_key][i].shape) == 4:
-                                emb_out_1 = embedder(batch[embedder.input_key][i])
-                            else:
-                                emb_out_1 = embedder(batch[embedder.input_key][i].unsqueeze(0))
-                            emb_out_1s.append(emb_out_1)
-                        emb_out = torch.concat(emb_out_1s, 0)
+
+                        if len(batch[embedder.input_key].shape) == 5:
+                            emb_out = rearrange(batch[embedder.input_key], "b c ... -> (b c) ... ")
+                            emb_out = embedder(emb_out)
+                        else:
+                            emb_out = embedder(batch[embedder.input_key])
+
+                        # emb_out_1s = []
+                        # # TODO this should be a parameter
+                        # for i in range(batch[embedder.input_key].shape[0]):
+                        #     if len(batch[embedder.input_key][i].shape) == 4:
+                        #         emb_out_1 = embedder(batch[embedder.input_key][i])
+                        #     else:
+                        #         emb_out_1 = embedder(batch[embedder.input_key][i].unsqueeze(0))
+                        #     emb_out_1s.append(emb_out_1)
+                        # emb_out = torch.concat(emb_out_1s, 0)
 
                     elif embedder.add_sequence_dim:  # concatenation
                         emb_dim = embedder.num_features * embedder.outdim
@@ -325,7 +332,9 @@ class FrozenOpenCLIPImageEmbedder(AbstractEmbModel):
             self,
             arch="ViT-H-14",
             # version="path_to/laion/CLIP-ViT-H-14-laion2B-s32B-b79K/open_clip_pytorch_model.bin",
-            version="laion2b_s32b_b79k",
+            # version="laion2b_s32b_b79k",
+            # version="ckpts/open_clip_pytorch_model.bin",
+            version="ckpts/open_clip_model.safetensors",
             device="cuda",
             max_length=77,
             freeze=True,

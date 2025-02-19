@@ -288,7 +288,7 @@
 
 
         {
-            "name": "vista_sample",
+            "name": "vista_sample_custom_nusc",
             "type": "debugpy",
             "request": "launch",
             "program": "custom_sample.py",
@@ -302,9 +302,14 @@
             },
 
             "args": [
-                "--action", "traj",
+                "--action", "free",
                 "--n_steps", "20",
-                "--low_vram"
+                "--low_vram",
+
+                "--dataset", "NUSCENES-MultiView",
+                "--n_frames", "5", 
+                "--n_conds", "3",
+
             ]
         },
 

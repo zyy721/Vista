@@ -8,10 +8,14 @@ from torchvision import transforms
 import init_proj_path
 from sample_utils import *
 
+import pickle as pkl
+import tqdm
+
 VERSION2SPECS = {
     "vwm": {
         # "config": "configs/inference/vista.yaml",
-        "config": "configs/inference/custom_vista.yaml",
+        # "config": "configs/inference/custom_vista.yaml",
+        "config": "configs/inference/custom_nusc_infer.yaml",
 
         "ckpt": "ckpts/vista.safetensors"
     }
@@ -24,9 +28,11 @@ DATASET2SOURCES = {
     },
     "IMG": {
         "data_root": "image_folder"
-    }
-}
+    },
 
+    "NUSCENES-MultiView": {},
+
+}
 
 def parse_args(**parser_kwargs):
     parser = argparse.ArgumentParser(**parser_kwargs)
@@ -132,6 +138,43 @@ def get_sample(selected_index=0, dataset_name="NUSCENES", num_frames=25, action_
         image_file = image_list[selected_index]
 
         path_list = [os.path.join(dataset_dict["data_root"], image_file)] * num_frames
+
+    elif dataset_name == "NUSCENES-MultiView":
+        info_path = "data/sample_nusc_video_all_cam_val.pkl"
+        with open(info_path, 'rb') as f:
+            all_cam_video_info = pkl.load(f)
+
+        total_length = len(all_cam_video_info)
+        all_cam_output_videos = {}
+
+        for cam_name, video_info in all_cam_video_info.items():
+            output_videos = []
+            for video_name, frames in tqdm.tqdm(video_info.items(), desc="Making Nuscenes dataset"):
+
+                output_videos.append(frames)
+
+            all_cam_output_videos[cam_name] = output_videos
+
+
+        index = selected_index
+
+
+        images_list = []
+        init_frame = random.randint(0,len(all_cam_output_videos['CAM_FRONT'][index])-num_frames)
+        for cam_name, video in all_cam_output_videos.items():
+            video = video[index]
+            video = video[init_frame:init_frame+num_frames]
+            cur_cam_img_list = []
+            for img_path in video:
+                img_path = img_path[9:]
+                image = load_img(img_path)
+                cur_cam_img_list.append(image)
+            cur_cam_img = torch.stack(cur_cam_img_list,dim=0)
+            images_list.append(cur_cam_img)
+
+        image_seq = torch.stack(images_list)
+        path_list = image_seq
+
     else:
         with open(dataset_dict["anno_file"], "r") as anno_json:
             all_samples = json.load(anno_json)
@@ -221,14 +264,17 @@ if __name__ == "__main__":
                                                                            opt.n_frames,
                                                                            opt.action)
 
-        img_seq = list()
-        for each_path in frame_list:
-            img = load_img(each_path, opt.height, opt.width)
-            img_seq.append(img)
-        images = torch.stack(img_seq)
+        # img_seq = list()
+        # for each_path in frame_list:
+        #     img = load_img(each_path, opt.height, opt.width)
+        #     img_seq.append(img)
+        # images = torch.stack(img_seq)
+
+        images = frame_list
 
         value_dict = init_embedder_options(unique_keys)
-        cond_img = img_seq[0][None]
+        # cond_img = img_seq[0][None]
+        cond_img = images[:, 0]
         value_dict["cond_frames_without_noise"] = cond_img
         value_dict["cond_aug"] = opt.cond_aug
         value_dict["cond_frames"] = cond_img + opt.cond_aug * torch.randn_like(cond_img)
@@ -242,7 +288,8 @@ if __name__ == "__main__":
             guider = "VanillaCFG"
         sampler = init_sampling(guider=guider, steps=opt.n_steps, cfg_scale=opt.cfg_scale, num_frames=opt.n_frames)
 
-        uc_keys = ["cond_frames", "cond_frames_without_noise", "command", "trajectory", "speed", "angle", "goal"]
+        # uc_keys = ["cond_frames", "cond_frames_without_noise", "command", "trajectory", "speed", "angle", "goal"]
+        uc_keys = ["cond_frames", "cond_frames_without_noise"]
 
         out = do_sample(
             images,

@@ -1,6 +1,6 @@
 from vwm.modules.attention import *
 from vwm.modules.diffusionmodules.util import AlphaBlender, linear, timestep_embedding
-
+import math
 
 class TimeMixSequential(nn.Sequential):
     def forward(self, x, context=None, timesteps=None):
@@ -352,7 +352,8 @@ class BasicMultiviewTransformerBlock(BasicTransformerBlock):
             neighboring_view_pair: Optional[Dict[int, List[int]]] = None,
             neighboring_attn_type: Optional[str] = "add",
             zero_module_type="zero_linear",    
-            num_frames = None,        
+            num_frames = None,
+            origin_img_size = [320, 576],
     ):
         super().__init__(
             dim,
@@ -420,6 +421,8 @@ class BasicMultiviewTransformerBlock(BasicTransformerBlock):
         # if self.use_checkpoint:
         #     print(f"{self.__class__.__name__} is using checkpointing")
 
+        self.origin_img_size = origin_img_size
+
         self.neighboring_view_pair = _ensure_kv_is_int(neighboring_view_pair)
         self.neighboring_attn_type = neighboring_attn_type
         # multiview attention
@@ -458,22 +461,53 @@ class BasicMultiviewTransformerBlock(BasicTransformerBlock):
     def n_cam(self):
         return len(self.neighboring_view_pair)
 
-    def _construct_attn_input(self, norm_hidden_states):
+    def _construct_attn_input(self, norm_hidden_states, h_img_size=None, w_img_size=None,):
         B = len(norm_hidden_states)
         # reshape, key for origin view, value for ref view
         hidden_states_in1 = []
         hidden_states_in2 = []
         cam_order = []
+        # if self.neighboring_attn_type == "add":
+        #     for key, values in self.neighboring_view_pair.items():
+        #         for value in values:
+        #             hidden_states_in1.append(norm_hidden_states[:, key])
+        #             hidden_states_in2.append(norm_hidden_states[:, value])
+        #             cam_order += [key] * B
+        #     # N*2*B, H*W, head*dim
+        #     hidden_states_in1 = torch.cat(hidden_states_in1, dim=0)
+        #     hidden_states_in2 = torch.cat(hidden_states_in2, dim=0)
+        #     cam_order = torch.LongTensor(cam_order)
+
         if self.neighboring_attn_type == "add":
+            half_w_img_size = math.ceil(w_img_size / 2) 
+            norm_hidden_states_split = rearrange(
+                norm_hidden_states, "bt c (h w) d -> bt c h w d", h=h_img_size, w=w_img_size)
+            norm_hidden_states_left = norm_hidden_states_split[:, :, :, :half_w_img_size, :]
+            norm_hidden_states_left = rearrange(
+                norm_hidden_states_left, "bt c h half_w d -> bt c (h half_w) d")
+            norm_hidden_states_right = norm_hidden_states_split[:, :, :, -half_w_img_size:, :]
+            norm_hidden_states_right = rearrange(
+                norm_hidden_states_right, "bt c h half_w d -> bt c (h half_w) d")
+
             for key, values in self.neighboring_view_pair.items():
-                for value in values:
-                    hidden_states_in1.append(norm_hidden_states[:, key])
-                    hidden_states_in2.append(norm_hidden_states[:, value])
-                    cam_order += [key] * B
+                # for value in values:
+                #     hidden_states_in1.append(norm_hidden_states[:, key])
+                #     hidden_states_in2.append(norm_hidden_states[:, value])
+                #     cam_order += [key] * B
+
+                hidden_states_in1.append(norm_hidden_states[:, key])
+                hidden_states_in2.append(norm_hidden_states_right[:, values[0]])
+                cam_order += [key] * B
+
+                hidden_states_in1.append(norm_hidden_states[:, key])
+                hidden_states_in2.append(norm_hidden_states_left[:, values[1]])
+                cam_order += [key] * B
+
             # N*2*B, H*W, head*dim
             hidden_states_in1 = torch.cat(hidden_states_in1, dim=0)
             hidden_states_in2 = torch.cat(hidden_states_in2, dim=0)
             cam_order = torch.LongTensor(cam_order)
+
         elif self.neighboring_attn_type == "concat":
             for key, values in self.neighboring_view_pair.items():
                 hidden_states_in1.append(norm_hidden_states[:, key])
@@ -536,10 +570,17 @@ class BasicMultiviewTransformerBlock(BasicTransformerBlock):
         #     norm_hidden_states, '(b n) ... -> b n ...', n=self.n_cam)
         norm_hidden_states = rearrange(
             norm_hidden_states, '(b n t) ... -> (b t) n ...', n=self.n_cam, t=self.num_frames)
+        
+        downsample_rate = self.origin_img_size[0] * self.origin_img_size[1] // norm_hidden_states.shape[2] 
+        downsample_rate = int(downsample_rate ** 0.5)
+        h_img_size = self.origin_img_size[0] // downsample_rate
+        w_img_size = self.origin_img_size[1] // downsample_rate
+        assert h_img_size * w_img_size == norm_hidden_states.shape[2] 
+
         B = len(norm_hidden_states)
         # key is query in attention; value is key-value in attention
         hidden_states_in1, hidden_states_in2, cam_order = self._construct_attn_input(
-            norm_hidden_states, )
+            norm_hidden_states, h_img_size, w_img_size)
         # attention
         attn_raw_output = self.attn4(
             hidden_states_in1,
@@ -602,6 +643,7 @@ class VideoMultiviewTransformerBlock(VideoTransformerBlock):
             neighboring_attn_type: Optional[str] = "add",
             zero_module_type="zero_linear",    
             num_frames = None, 
+            origin_img_size = [320, 576],
     ):
         super().__init__(
             dim,
@@ -691,6 +733,8 @@ class VideoMultiviewTransformerBlock(VideoTransformerBlock):
         #     print(f"{self.__class__.__name__} is using checkpointing")
 
 
+        self.origin_img_size = origin_img_size
+
         self.neighboring_view_pair = _ensure_kv_is_int(neighboring_view_pair)
         self.neighboring_attn_type = neighboring_attn_type
         # multiview attention
@@ -730,22 +774,53 @@ class VideoMultiviewTransformerBlock(VideoTransformerBlock):
     def n_cam(self):
         return len(self.neighboring_view_pair)
 
-    def _construct_attn_input(self, norm_hidden_states):
+    def _construct_attn_input(self, norm_hidden_states, h_img_size=None, w_img_size=None,):
         B = len(norm_hidden_states)
         # reshape, key for origin view, value for ref view
         hidden_states_in1 = []
         hidden_states_in2 = []
         cam_order = []
+        # if self.neighboring_attn_type == "add":
+        #     for key, values in self.neighboring_view_pair.items():
+        #         for value in values:
+        #             hidden_states_in1.append(norm_hidden_states[:, key])
+        #             hidden_states_in2.append(norm_hidden_states[:, value])
+        #             cam_order += [key] * B
+        #     # N*2*B, H*W, head*dim
+        #     hidden_states_in1 = torch.cat(hidden_states_in1, dim=0)
+        #     hidden_states_in2 = torch.cat(hidden_states_in2, dim=0)
+        #     cam_order = torch.LongTensor(cam_order)
+
         if self.neighboring_attn_type == "add":
+            half_w_img_size = math.ceil(w_img_size / 2) 
+            norm_hidden_states_split = rearrange(
+                norm_hidden_states, "bt c (h w) d -> bt c h w d", h=h_img_size, w=w_img_size)
+            norm_hidden_states_left = norm_hidden_states_split[:, :, :, :half_w_img_size, :]
+            norm_hidden_states_left = rearrange(
+                norm_hidden_states_left, "bt c h half_w d -> bt c (h half_w) d")
+            norm_hidden_states_right = norm_hidden_states_split[:, :, :, -half_w_img_size:, :]
+            norm_hidden_states_right = rearrange(
+                norm_hidden_states_right, "bt c h half_w d -> bt c (h half_w) d")
+
             for key, values in self.neighboring_view_pair.items():
-                for value in values:
-                    hidden_states_in1.append(norm_hidden_states[:, key])
-                    hidden_states_in2.append(norm_hidden_states[:, value])
-                    cam_order += [key] * B
+                # for value in values:
+                #     hidden_states_in1.append(norm_hidden_states[:, key])
+                #     hidden_states_in2.append(norm_hidden_states[:, value])
+                #     cam_order += [key] * B
+
+                hidden_states_in1.append(norm_hidden_states[:, key])
+                hidden_states_in2.append(norm_hidden_states_right[:, values[0]])
+                cam_order += [key] * B
+
+                hidden_states_in1.append(norm_hidden_states[:, key])
+                hidden_states_in2.append(norm_hidden_states_left[:, values[1]])
+                cam_order += [key] * B
+
             # N*2*B, H*W, head*dim
             hidden_states_in1 = torch.cat(hidden_states_in1, dim=0)
             hidden_states_in2 = torch.cat(hidden_states_in2, dim=0)
             cam_order = torch.LongTensor(cam_order)
+
         elif self.neighboring_attn_type == "concat":
             for key, values in self.neighboring_view_pair.items():
                 hidden_states_in1.append(norm_hidden_states[:, key])
@@ -808,10 +883,17 @@ class VideoMultiviewTransformerBlock(VideoTransformerBlock):
         #     norm_hidden_states, '(b n) ... -> b n ...', n=self.n_cam)
         norm_hidden_states = rearrange(
             norm_hidden_states, '(b n l) t ... -> (b t) n l ...', n=self.n_cam, l=S, t=timesteps)
+
+        downsample_rate = self.origin_img_size[0] * self.origin_img_size[1] // norm_hidden_states.shape[2] 
+        downsample_rate = int(downsample_rate ** 0.5)
+        h_img_size = self.origin_img_size[0] // downsample_rate
+        w_img_size = self.origin_img_size[1] // downsample_rate
+        assert h_img_size * w_img_size == norm_hidden_states.shape[2] 
+
         BT = len(norm_hidden_states)
         # key is query in attention; value is key-value in attention
         hidden_states_in1, hidden_states_in2, cam_order = self._construct_attn_input(
-            norm_hidden_states, )
+            norm_hidden_states, h_img_size, w_img_size)
         # attention
         attn_raw_output = self.attn4(
             hidden_states_in1, 
