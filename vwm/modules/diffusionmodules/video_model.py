@@ -730,10 +730,10 @@ class VideoUNetMultiView(VideoUNet):
                 y = repeat_as_img_seq(y, num_frames)
             emb = emb + self.label_emb(y)
 
-        if emb.shape[0] != x.shape[0] // num_frames:
-            emb = rearrange(emb, "(b t) c -> b t c", t=num_frames)
-            emb = emb.unsqueeze(1).expand(-1, 6, -1, -1)
-            emb = emb.contiguous().view(-1, emb.shape[-1])
+        # if emb.shape[0] != x.shape[0] // num_frames:
+        emb = rearrange(emb, "(b t) c -> b t c", t=num_frames)
+        emb = emb.unsqueeze(1).expand(-1, 6, -1, -1)
+        emb = emb.contiguous().view(-1, emb.shape[-1])
 
         h = x
         for module in self.input_blocks:

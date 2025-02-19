@@ -6,10 +6,12 @@ from pytorch_lightning import seed_everything
 from torchvision import transforms
 
 import init_proj_path
-from sample_utils import *
+# from sample_utils import *
+from custom_sample_utils import *
 
 import pickle as pkl
 import tqdm
+
 
 VERSION2SPECS = {
     "vwm": {
@@ -274,7 +276,7 @@ if __name__ == "__main__":
 
         value_dict = init_embedder_options(unique_keys)
         # cond_img = img_seq[0][None]
-        cond_img = images[:, 0]
+        cond_img = images[:, 0][None]
         value_dict["cond_frames_without_noise"] = cond_img
         value_dict["cond_aug"] = opt.cond_aug
         value_dict["cond_frames"] = cond_img + opt.cond_aug * torch.randn_like(cond_img)
@@ -306,12 +308,16 @@ if __name__ == "__main__":
             samples, samples_z, inputs = out
             virtual_path = os.path.join(opt.save, "virtual")
             real_path = os.path.join(opt.save, "real")
-            perform_save_locally(virtual_path, samples, "videos", opt.dataset, sample_index)
-            perform_save_locally(virtual_path, samples, "grids", opt.dataset, sample_index)
-            perform_save_locally(virtual_path, samples, "images", opt.dataset, sample_index)
-            perform_save_locally(real_path, inputs, "videos", opt.dataset, sample_index)
-            perform_save_locally(real_path, inputs, "grids", opt.dataset, sample_index)
-            perform_save_locally(real_path, inputs, "images", opt.dataset, sample_index)
+            # perform_save_locally(virtual_path, samples, "videos", opt.dataset, sample_index)
+            # perform_save_locally(virtual_path, samples, "grids", opt.dataset, sample_index)
+            # perform_save_locally(virtual_path, samples, "images", opt.dataset, sample_index)
+            # perform_save_locally(real_path, inputs, "videos", opt.dataset, sample_index)
+            # perform_save_locally(real_path, inputs, "grids", opt.dataset, sample_index)
+            # perform_save_locally(real_path, inputs, "images", opt.dataset, sample_index)
+
+            perform_save_locally(virtual_path, samples[0], "images", opt.dataset, sample_index)
+            perform_save_locally(real_path, inputs[0], "images", opt.dataset, sample_index)
+
         else:
             raise TypeError
 

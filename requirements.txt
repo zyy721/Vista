@@ -1,6 +1,6 @@
 black==23.7.0
 chardet==5.1.0
-clip @ git+https://github.com/openai/CLIP.git
+# clip @ git+https://github.com/openai/CLIP.git
 deepspeed==0.10.1
 einops>=0.6.1
 fairscale>=0.4.13
